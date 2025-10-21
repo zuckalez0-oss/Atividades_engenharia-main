@@ -1,7 +1,7 @@
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from flask import Flask, render_template, request, redirect, url_for, flash, abort, send_from_directory
 from werkzeug.utils import secure_filename
 from flask_sqlalchemy import SQLAlchemy
@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 # --- CONFIGURAÇÃO ---
 basedir = os.path.abspath(os.path.dirname(__file__))
-usuarios_json_path = os.path.join(basedir, 'usuarios.json')
+usuarios_json_path = os.path.join(basedir, 'usuarios.json.bkp') # Apontando para o backup
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'uma-chave-secreta-muito-segura-trocar-em-producao'
@@ -37,24 +37,22 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 
-# --- MODELOS DE DADOS ---
-class Usuario(UserMixin):
-    def __init__(self, id, login, nome, senha_hash, is_admin=False):
-        self.id, self.login, self.nome, self.senha_hash, self.is_admin = id, login, nome, senha_hash, is_admin
-    def get_id(self): return self.login
+# --- MODELOS DE DADOS (com User no DB) ---
+class User(db.Model, UserMixin):
+    __tablename__ = 'user'
+    id = db.Column(db.Integer, primary_key=True)
+    login = db.Column(db.String(80), unique=True, nullable=False)
+    nome = db.Column(db.String(150), nullable=False)
+    senha_hash = db.Column(db.String(200), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)
 
 @login_manager.user_loader
 def load_user(user_id):
-    try:
-        with open(usuarios_json_path, 'r', encoding='utf-8') as f:
-            users = json.load(f)['usuarios']
-        for user_data in users:
-            if user_data['login'] == user_id:
-                return Usuario(id=user_data['login'], login=user_data['login'], nome=user_data['nome'], senha_hash=user_data.get('senha_hash', ''), is_admin=user_data.get('is_admin', False))
-    except (FileNotFoundError, KeyError): return None
-    return None
+    # user_id é a chave primária (id) da tabela User
+    return User.query.get(int(user_id))
 
 class Atividade(db.Model):
+    __tablename__ = 'atividade'
     id = db.Column(db.Integer, primary_key=True)
     nome_atividade = db.Column(db.String(200), nullable=False)
     prioridade = db.Column(db.String(10), nullable=False, default='P-3')
@@ -71,6 +69,7 @@ class Atividade(db.Model):
     historico = db.relationship('HistoricoModificacao', backref='atividade', lazy=True, cascade="all, delete-orphan", order_by='desc(HistoricoModificacao.data_modificacao)')
 
 class HistoricoModificacao(db.Model):
+    __tablename__ = 'historico_modificacao'
     id = db.Column(db.Integer, primary_key=True)
     data_modificacao = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     campo_alterado = db.Column(db.String(100), nullable=False)
@@ -80,6 +79,7 @@ class HistoricoModificacao(db.Model):
     atividade_id = db.Column(db.Integer, db.ForeignKey('atividade.id'), nullable=False)
 
 class PedidoProducao(db.Model):
+    __tablename__ = 'pedido_producao'
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(200), nullable=False)
     pedido = db.Column(db.String(100), nullable=True)
@@ -120,8 +120,8 @@ def login():
     if request.method == 'POST':
         login_input = request.form.get('login')
         senha_input = request.form.get('senha')
-        user_obj = load_user(login_input)
-        if user_obj and user_obj.senha_hash and check_password_hash(user_obj.senha_hash, senha_input):
+        user_obj = User.query.filter_by(login=login_input).first()
+        if user_obj and check_password_hash(user_obj.senha_hash, senha_input):
             login_user(user_obj)
             next_page = request.args.get('next')
             return redirect(next_page or url_for('index'))
@@ -277,8 +277,10 @@ def novo_pedido():
                 arquivo_salvo = f"file_{uuid.uuid4()}.{ext}"
                 file.save(os.path.join(app.config['UPLOAD_FOLDER_PEDIDOS'], arquivo_salvo))
 
-        data_termino = datetime.strptime(request.form.get('data_termino_producao'), '%Y-%m-%d').date() if request.form.get('data_termino_producao') else None
-        data_entrega = datetime.strptime(request.form.get('data_prevista_entrega'), '%Y-%m-%d').date() if request.form.get('data_prevista_entrega') else None
+        data_termino_str = request.form.get('data_termino_producao')
+        data_termino = date.fromisoformat(data_termino_str) if data_termino_str else None
+        data_entrega_str = request.form.get('data_prevista_entrega')
+        data_entrega = date.fromisoformat(data_entrega_str) if data_entrega_str else None
 
         novo = PedidoProducao(
             nome=request.form.get('nome'),
@@ -312,27 +314,66 @@ def detalhes_pedido(pedido_id):
 def inject_year():
     return {'current_year': datetime.utcnow().year}
 
-def criar_hash_inicial():
+def migrar_usuarios_json_para_db():
+    """
+    Lê o arquivo JSON de usuários (se existir) e os insere no banco de dados.
+    Gera hash para senhas em texto plano e evita duplicatas.
+    Esta função deve ser executada uma vez.
+    """
     try:
-        with open(usuarios_json_path, 'r+', encoding='utf-8') as f:
-            data = json.load(f)
-            alterado = False
-            for user in data['usuarios']:
-                if 'senha_hash' not in user and 'senha' in user:
-                    print(f"Gerando hash para o usuário: {user['login']}")
-                    user['senha_hash'] = generate_password_hash(user['senha'], method='pbkdf2:sha256')
-                    del user['senha']
-                    alterado = True
-            if alterado:
-                f.seek(0)
-                json.dump(data, f, indent=2, ensure_ascii=False)
-                f.truncate()
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Erro ao processar usuarios.json: {e}.")
+        if not os.path.exists(usuarios_json_path):
+            print("Arquivo de backup de usuários (usuarios.json.bkp) não encontrado. Pulando migração.")
+            return
 
-if __name__ == '__main__':
+        with open(usuarios_json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        for user_data in data.get('usuarios', []):
+            login = user_data.get('login')
+            if not login:
+                continue
+
+            # Verifica se o usuário já existe
+            if User.query.filter_by(login=login).first():
+                print(f"Usuário '{login}' já existe no banco de dados. Pulando.")
+                continue
+
+            # Garante que a senha tenha hash
+            senha_hash = user_data.get('senha_hash')
+            if not senha_hash and 'senha' in user_data:
+                senha_hash = generate_password_hash(user_data['senha'], method='pbkdf2:sha256')
+
+            if not senha_hash:
+                print(f"Usuário '{login}' sem senha ou hash. Pulando.")
+                continue
+
+            novo_usuario = User(
+                login=login,
+                nome=user_data.get('nome'),
+                senha_hash=senha_hash,
+                is_admin=user_data.get('is_admin', False)
+            )
+            db.session.add(novo_usuario)
+            print(f"Usuário '{login}' migrado para o banco de dados.")
+        
+        db.session.commit()
+        print("Migração de usuários concluída.")
+
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Erro ao processar o arquivo de usuários JSON: {e}")
+
+def inicializar_db():
+    """Cria as tabelas e executa a migração inicial de usuários se necessário."""
     with app.app_context():
         db.create_all()
-        criar_hash_inicial()
-    app.run(host='0.0.0.0', debug=True, port=5000)
+        # A função de migração será executada se a tabela de usuários estiver vazia.
+        if not User.query.first():
+            print("Tabela de usuários vazia. Tentando migrar de 'usuarios.json.bkp'...")
+            migrar_usuarios_json_para_db()
+        else:
+            print("Tabela de usuários já contém dados. Migração não necessária.")
 
+# Bloco para execução local
+if __name__ == '__main__':
+    inicializar_db()
+    app.run(debug=True)
