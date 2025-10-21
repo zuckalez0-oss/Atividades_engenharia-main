@@ -9,6 +9,7 @@
         <div>
             <a href="{{ url_for('editar_atividade', atividade_id=atividade.id) }}" class="btn btn-primary">Editar</a>
             <a href="{{ url_for('todas_atividades') }}" class="btn">Voltar para Lista</a>
+            <button type="button" class="btn btn-primary" id="copy-to-email-btn">Copiar para Email</button>
         </div>
     </div>
 
@@ -33,7 +34,7 @@
     <div class="anexo-container">
         <h3>Anexo</h3>
         <!-- **CORREÇÃO APLICADA AQUI** -->
-        <img src="{{ url_for('uploaded_file', folder='atividades', filename=atividade.imagem_anexo) }}" 
+        <img src="{{ url_for('uploaded_file', folder='atividades', filename=atividade.imagem_anexo, _external=True) }}" 
              alt="Anexo da atividade" 
              class="anexo-thumbnail"
              id="anexo-thumbnail">
@@ -86,5 +87,113 @@
     if (thumbnail) { thumbnail.addEventListener('click', () => { lightboxImage.src = thumbnail.src; lightboxOverlay.style.display = 'flex'; }); }
     if (lightboxClose) { lightboxClose.addEventListener('click', () => { lightboxOverlay.style.display = 'none'; }); }
     if (lightboxOverlay) { lightboxOverlay.addEventListener('click', (event) => { if (event.target === lightboxOverlay) { lightboxOverlay.style.display = 'none'; } }); }
+</script>
+
+<!-- Bloco oculto para gerar o conteúdo HTML para o e-mail -->
+<div id="email-content" style="display: none;">
+    <div style="font-family: 'Poppins', sans-serif; color: #ccd6f6; background-color: #0a192f; padding: 20px; border-radius: 8px;">
+        <h2 style="color: #00bfff; margin-bottom: 15px;">Detalhes da Atividade #{{ atividade.id }}</h2>
+        
+        <p style="margin-bottom: 8px;"><strong>Nome da Atividade:</strong> {{ atividade.nome_atividade }}</p>
+        <p style="margin-bottom: 8px;"><strong>Prioridade:</strong> 
+            <span style="padding: 0.25em 0.6em; font-size: 0.8rem; font-weight: 600; border-radius: 15px; color: #fff; background-color: 
+                {% if atividade.prioridade == 'P-1' %}#dc3545
+                {% elif atividade.prioridade == 'P-2' %}#fd7e14
+                {% elif atividade.prioridade == 'P-3' %}#0d6efd
+                {% elif atividade.prioridade == 'P-4' %}#198754
+                {% else %}#6c757d{% endif %}">
+                {{ atividade.prioridade }}
+            </span>
+        </p>
+        <p style="margin-bottom: 8px;"><strong>Status:</strong> 
+            <span style="padding: 0.25em 0.6em; font-size: 0.8rem; font-weight: 600; border-radius: 15px; color: #fff; background-color: 
+                {% if atividade.status == 'Iniciado' %}#0d6efd
+                {% elif atividade.status == 'Com o Compras' %}#6f42c1
+                {% elif atividade.status == 'Com a Diretoria' %}#ffc107
+                {% elif atividade.status == 'Concluído' %}#198754
+                {% else %}#6c757d{% endif %}">
+                {{ atividade.status }}
+            </span>
+        </p>
+        <p style="margin-bottom: 8px;"><strong>Pedido:</strong> {{ atividade.pedido or 'N/A' }}</p>
+        <p style="margin-bottom: 8px;"><strong>Solicitante:</strong> {{ atividade.solicitante or 'N/A' }}</p>
+        <p style="margin-bottom: 8px;"><strong>Centro de Custo:</strong> {{ atividade.centro_de_custo }}</p>
+        <p style="margin-bottom: 8px;"><strong>Data de Criação:</strong> {{ atividade.data_criacao.strftime('%d/%m/%Y %H:%M') }}</p>
+        <p style="margin-bottom: 8px;"><strong>Local de Entrega:</strong> {{ atividade.local_de_entrega or 'N/A' }}</p>
+        <p style="margin-bottom: 8px;"><strong>Obra / Destino:</strong> {{ atividade.obra_destino or 'N/A' }}</p>
+        <p style="margin-bottom: 8px;"><strong>Última Modificação por:</strong> {{ atividade.responsavel_atual }}</p>
+        
+        <p style="margin-top: 15px; margin-bottom: 5px;"><strong>Observações:</strong></p>
+        <pre style="white-space: pre-wrap; word-wrap: break-word; background-color: #172a45; padding: 10px; border-radius: 4px; color: #ccd6f6;">{{ atividade.observacoes or 'Nenhuma observação.' }}</pre>
+
+        {% if atividade.imagem_anexo %}
+        <p style="margin-top: 15px; margin-bottom: 5px;"><strong>Anexo:</strong></p>
+        <img src="{{ url_for('uploaded_file', folder='atividades', filename=atividade.imagem_anexo, _external=True) }}" 
+             alt="Anexo da atividade" 
+             style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #233554; display: block; margin-bottom: 10px;">
+        {% endif %}
+
+        <h3 style="color: #00bfff; margin-top: 20px; margin-bottom: 10px;">Histórico de Modificações</h3>
+        {% for hist in atividade.historico %}
+        <div style="margin-bottom: 10px; padding: 10px; border-left: 3px solid #00bfff; background-color: #172a45; border-radius: 4px; color: #ccd6f6;">
+            <p style="margin-bottom: 5px;"><strong>{{ hist.modificado_por }}</strong> em {{ hist.data_modificacao.strftime('%d/%m/%Y às %H:%M:%S') }}</p>
+            {% if hist.campo_alterado == 'Criação da Atividade' %}
+                <p>{{ hist.valor_novo }}</p>
+            {% else %}
+                <p>Alterou o campo <strong style="color: #00bfff;">"{{ hist.campo_alterado }}"</strong>:</p>
+                <ul style="list-style-type: none; padding-left: 0;">
+                    <li style="margin-bottom: 3px;"><strong>De:</strong> <pre style="white-space: pre-wrap; word-wrap: break-word; background-color: #0a192f; padding: 5px; border-radius: 3px; color: #ccd6f6; margin: 0;">{{ hist.valor_antigo or 'N/A' }}</pre></li>
+                    <li><strong>Para:</strong> <pre style="white-space: pre-wrap; word-wrap: break-word; background-color: #0a192f; padding: 5px; border-radius: 3px; color: #ccd6f6; margin: 0;">{{ hist.valor_novo or 'N/A' }}</pre></li>
+                </ul>
+            {% endif %}
+        </div>
+        {% else %}
+            <p>Nenhuma modificação registrada ainda.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    const copyToEmailBtn = document.getElementById('copy-to-email-btn');
+    if (copyToEmailBtn) {
+        copyToEmailBtn.addEventListener('click', async () => {
+            const emailContentDiv = document.getElementById('email-content');
+            if (!emailContentDiv) {
+                console.error("Element 'email-content' not found.");
+                alert("Erro ao preparar conteúdo para copiar.");
+                return;
+            }
+
+            const htmlContent = emailContentDiv.innerHTML;
+
+            try {
+                // **CORREÇÃO**: Copia como HTML rico, não como texto plano.
+                const blob = new Blob([htmlContent], { type: 'text/html' });
+                const clipboardItem = new ClipboardItem({ 'text/html': blob });
+                await navigator.clipboard.write([clipboardItem]);
+                alert("Conteúdo da atividade copiado para a área de transferência! Você pode colar no seu e-mail.");
+            } catch (err) {
+                console.warn('Falha ao usar a API de Clipboard para HTML, tentando fallback com texto: ', err);
+                // Fallback para navegadores mais antigos ou quando a permissão é negada
+                // Este fallback copia o HTML como texto, o que pode não manter a formatação em todos os clientes de e-mail.
+                const tempTextArea = document.createElement('textarea');
+                tempTextArea.value = htmlContent;
+                tempTextArea.style.position = 'fixed'; // Evita que a página role
+                tempTextArea.style.left = '-9999px'; // Esconde da visualização
+                document.body.appendChild(tempTextArea);
+                tempTextArea.focus();
+                tempTextArea.select();
+                try {
+                    document.execCommand('copy');
+                    alert("Conteúdo da atividade copiado para a área de transferência! Você pode colar no seu e-mail.");
+                } catch (fallbackErr) {
+                    console.error('Falha no fallback de cópia: ', fallbackErr);
+                    alert("Não foi possível copiar automaticamente. Por favor, selecione e copie o conteúdo manualmente.");
+                } finally {
+                    document.body.removeChild(tempTextArea);
+                }
+            }
+        });
+    }
 </script>
 {% endblock %}
